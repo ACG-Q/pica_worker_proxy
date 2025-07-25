@@ -1,3 +1,10 @@
-name = "pica-worker-proxy"
-main = "worker.js"
-compatibility_date = "2025-07-24"
+# 项目名称
+name = 'pica-worker-proxy'
+# 主入口文件
+main = 'worker.js'
+# 兼容性日期，建议保持最新
+compatibility_date = '2025-07-24'
+
+# 启用日志
+[observability.logs]
+enabled = true

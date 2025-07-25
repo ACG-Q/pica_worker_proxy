@@ -3,30 +3,16 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
+    if (url.pathname.startsWith('/p=')) {
+      return await handleFileServerProxy(request, url);
+    }
     if (!url.pathname.startsWith('/api')) {
-      return new Response(htmlHelpPage(url), {
-        headers: { 'Content-Type': 'text/html; charset=utf-8' }
-      });
+      return handleHelpPage(url);
     }
-
     if (request.method === 'OPTIONS') {
-      return new Response(null, { headers: corsHeaders() });
+      return handleOptions();
     }
-
-    const path = url.pathname.replace(/^\/api/, '');
-    const targetUrl = `https://picaapi.picacomic.com${path}${url.search}`;
-
-    const proxyReq = new Request(targetUrl, {
-      method: request.method,
-      headers: request.headers,
-      body: ['GET', 'HEAD'].includes(request.method) ? undefined : request.body,
-      redirect: 'follow'
-    });
-
-    const response = await fetch(proxyReq);
-    const res = new Response(response.body, response);
-    Object.entries(corsHeaders()).forEach(([k, v]) => res.headers.set(k, v));
-    return res;
+    return await handleApiProxy(request, url);
   }
 }
 
@@ -36,6 +22,77 @@ function corsHeaders() {
     'Access-Control-Allow-Headers': '*',
     'Access-Control-Allow-Methods': '*',
   };
+}
+
+function handleHelpPage(url) {
+  return new Response(htmlHelpPage(url), {
+    headers: { 'Content-Type': 'text/html; charset=utf-8' }
+  });
+}
+
+function handleOptions() {
+  return new Response(null, { headers: corsHeaders() });
+}
+
+async function handleFileServerProxy(request, url) {
+  const realUrl = decodeURIComponent(url.pathname.slice(3)) + url.search;
+  const proxyReq = new Request(realUrl, {
+    method: request.method,
+    headers: request.headers,
+    body: ['GET', 'HEAD'].includes(request.method) ? undefined : request.body,
+    redirect: 'follow'
+  });
+  const response = await fetch(proxyReq);
+  const res = new Response(response.body, response);
+  Object.entries(corsHeaders()).forEach(([k, v]) => res.headers.set(k, v));
+  return res;
+}
+
+async function handleApiProxy(request, url) {
+  const path = url.pathname.replace(/^\/api/, '');
+  const targetUrl = `https://picaapi.picacomic.com${path}${url.search}`;
+  const proxyReq = new Request(targetUrl, {
+    method: request.method,
+    headers: request.headers,
+    body: ['GET', 'HEAD'].includes(request.method) ? undefined : request.body,
+    redirect: 'follow'
+  });
+  const response = await fetch(proxyReq);
+  const contentType = response.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) {
+    let data = await response.text();
+    try {
+      let json = JSON.parse(data);
+      patchFileServer(json, url.origin);
+      data = JSON.stringify(json);
+    } catch (e) {
+      // 非法 JSON，原样返回
+    }
+    const res = new Response(data, response);
+    res.headers.set('content-type', 'application/json; charset=utf-8');
+    Object.entries(corsHeaders()).forEach(([k, v]) => res.headers.set(k, v));
+    return res;
+  } else {
+    const res = new Response(response.body, response);
+    Object.entries(corsHeaders()).forEach(([k, v]) => res.headers.set(k, v));
+    return res;
+  }
+}
+
+function patchFileServer(obj, origin) {
+  if (Array.isArray(obj)) {
+    for (let i = 0; i < obj.length; i++) {
+      patchFileServer(obj[i], origin);
+    }
+  } else if (obj && typeof obj === 'object') {
+    for (const key of Object.keys(obj)) {
+      if (key === 'fileServer' && typeof obj[key] === 'string') {
+        obj[key] = `${origin}/p=${encodeURIComponent(obj[key])}`;
+      } else {
+        patchFileServer(obj[key], origin);
+      }
+    }
+  }
 }
 
 function htmlHelpPage(url) {
